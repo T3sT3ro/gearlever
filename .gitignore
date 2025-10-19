@@ -1,0 +1,12 @@
+# Build artifacts
+build/
+*.AppImage
+*.AppImage.zsync
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

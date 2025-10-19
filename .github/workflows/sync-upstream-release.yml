@@ -1,0 +1,134 @@
+# Sync releases from upstream repository and build AppImage
+name: Sync Upstream Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to sync (e.g., 3.4.5)'
+        required: true
+        type: string
+  schedule:
+    - cron: '0 0 * * *'
+  repository_dispatch:
+    types: [sync-release]
+
+jobs:
+  check-and-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          submodules: true
+          fetch-depth: 0
+      
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG_NAME="${{ inputs.tag_name }}"
+          else
+            TAG_NAME=$(curl -s https://api.github.com/repos/mijorus/gearlever/releases/latest | jq -r .tag_name)
+          fi
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/mijorus/gearlever/releases/tags/$TAG_NAME)
+          echo "release_name=$(echo "$RELEASE_DATA" | jq -r .name)" >> $GITHUB_OUTPUT
+          echo "release_body<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_DATA" | jq -r .body >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$(echo "$RELEASE_DATA" | jq -r .prerelease)" >> $GITHUB_OUTPUT
+          echo "is_draft=$(echo "$RELEASE_DATA" | jq -r .draft)" >> $GITHUB_OUTPUT
+      
+      - name: Check if release already exists
+        id: check_release
+        run: |
+          if gh release view "${{ steps.upstream.outputs.tag_name }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      
+      - name: Update submodule to release tag
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          cd gearlever
+          git fetch --tags
+          git checkout "${{ steps.upstream.outputs.tag_name }}"
+          cd ..
+          echo "Building from upstream tag: ${{ steps.upstream.outputs.tag_name }}"
+          git submodule status
+      
+      - name: Build Docker image
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          docker build -t gearlever-appimage -f .docker/Dockerfile .
+      
+      - name: Build AppImage
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          mkdir -p build
+          docker run --rm -v $(pwd)/build:/output:rw gearlever-appimage
+      
+      - name: Verify AppImage files
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          ls -lh build/
+          test -f build/GearLever-x86_64.AppImage
+          test -f build/GearLever-x86_64.AppImage.zsync
+      
+      - name: Create release with AppImage
+        if: steps.check_release.outputs.exists == 'false'
+        run: |
+          RELEASE_NOTES="${{ steps.upstream.outputs.release_body }}"
+          
+          FORK_NOTE="---
+
+          **Note**: This is a fork release with a custom AppImage build.
+          
+          - **Upstream release**: https://github.com/mijorus/gearlever/releases/tag/${{ steps.upstream.outputs.tag_name }}
+          - **AppImage**: Built from upstream source using Docker
+          - **Updates**: The AppImage includes update information pointing to this fork's releases
+          
+          For the original release, see the [upstream repository](https://github.com/mijorus/gearlever)."
+          
+          FULL_NOTES="$RELEASE_NOTES
+
+          $FORK_NOTE"
+          
+          gh release create "${{ steps.upstream.outputs.tag_name }}" \
+            --title "${{ steps.upstream.outputs.release_name }}" \
+            --notes "$FULL_NOTES" \
+            ${{ steps.upstream.outputs.is_prerelease == 'true' && '--prerelease' || '' }} \
+            ${{ steps.upstream.outputs.is_draft == 'true' && '--draft' || '' }} \
+            build/GearLever-x86_64.AppImage \
+            build/GearLever-x86_64.AppImage.zsync
+        env:
+          GH_TOKEN: ${{ github.token }}
+      
+      - name: Update existing release
+        if: steps.check_release.outputs.exists == 'true' && github.event_name == 'workflow_dispatch'
+        run: |
+          cd gearlever
+          git fetch --tags
+          git checkout "${{ steps.upstream.outputs.tag_name }}"
+          cd ..
+          
+          docker build -t gearlever-appimage -f .docker/Dockerfile .
+          mkdir -p build
+          docker run --rm -v $(pwd)/build:/output:rw gearlever-appimage
+          
+          gh release upload "${{ steps.upstream.outputs.tag_name }}" \
+            build/GearLever-x86_64.AppImage \
+            build/GearLever-x86_64.AppImage.zsync \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

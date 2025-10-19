@@ -1,0 +1,3 @@
+[submodule "gearlever"]
+	path = gearlever
+	url = https://github.com/mijorus/gearlever.git
