@@ -20,6 +20,9 @@
 
 Automated AppImage builds for [GearLever](https://github.com/mijorus/gearlever) - manage AppImages with ease.
 
+> [!WARNING]
+> Since creating a fork to build AppImages, someone reported missing libraries. After looking more into AppImages, I now better understand the original project author’s frustrations with the format. I’ve realized how many issues AppImages have and have decided not to continue maintaining them. My fork will stay up and continue building automated images on Ubuntu, but I won’t support other systems. AppImages turn out to be complicated and problematic the deeper you go, which is why I’m moving away from them.
+
 ## About
 
 This is an **orphan branch fork** that provides automated AppImage builds from the upstream [mijorus/gearlever](https://github.com/mijorus/gearlever) repository.
